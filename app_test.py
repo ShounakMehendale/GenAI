@@ -39,13 +39,12 @@ def get_vector_database(text_chunks):
 
 def get_rag_chain(hybrid_retriever):
     system_prompt = (
-        "You are an AI assistant for question-answering tasks which help employees relieve their queries based on the HR policies , comany documents provided.Your name is HR Bot "
-        "Use the following pieces of retrieved context to answer "
-        "the question. If you don't know the answer, say that you "
-        "don't know based on the context but you can provide the answer if you know the answer without this context."
-        "Use 8 sentences maximum. No need to keep the answer precise."
-        "\n\n"
-        "{context}"
+    "You are an assistant for question-answering tasks. "
+    "Use the following pieces of retrieved context to answer "
+    "the question. If you don't know the answer, say that you "
+    "don't know based on the context but you can provide the answer if you know the answer without this context.No need to keep the answer precise"
+    "\n\n"
+    "{context}"
     )
     output = StrOutputParser()
     prompt = ChatPromptTemplate.from_messages([
@@ -70,9 +69,54 @@ def handle_userinput(user_question,history):
     st.session_state.history.append(HumanMessage(content=user_question))
     st.session_state.history.append(AIMessage(content=response))
     #st.write(history)
-    st.session_state.chat_history.append(("user", user_question))
-    st.session_state.chat_history.append(("ai", response))
-    return response
+
+    context_docs = st.session_state.retriever.invoke(user_question)
+    evaluator_prompt = f"""
+You are an evaluator for a Retrieval-Augmented Generation (RAG) system. Your task is to assess the quality of a response given the retrieved documents and the user's question.
+
+Evaluate the following:
+
+ 1. Document Relevance
+- Do the retrieved documents contain information that is relevant to the user's question?
+- Rate relevance from 1 (not relevant) to 5 (highly relevant).
+
+ 2. Response Grounding
+- Is the AI's response clearly supported by the retrieved documents?
+- Rate grounding from 1 (not grounded at all) to 5 (fully grounded).
+- If it includes external knowledge, is it clearly separated or labeled as such?
+
+ 3. Overall Response Quality
+- Is the response correct, complete, clear, and useful to the user? Judge based on what the user asked and what was retrieved.
+- Rate quality from 1 (poor) to 5 (excellent).
+
+---
+
+**User Question**:
+{user_question}
+
+**Retrieved Documents**:
+{context_docs}
+
+**AI Response**:
+{response}
+
+---
+
+"""
+    llm = genai.GenerativeModel('gemini-2.0-flash')  
+    eval_result = llm.generate_content(evaluator_prompt).text
+
+    st.session_state.chat_history.append({
+        "sender": "user",
+        "msg": user_question
+    })
+    st.session_state.chat_history.append({
+        "sender": "ai",
+        "msg": response,
+        "context": context_docs,
+        "eval": eval_result
+    })
+    return eval_result
 
 def handle_without_pdf(user_question,history):
     llm = genai.GenerativeModel('gemini-2.0-flash')
@@ -122,6 +166,7 @@ def main():
                     keyword_search = BM25Retriever.from_texts(text_chunks)
                     keyword_search.k = 5
                     hybrid_retriever = EnsembleRetriever(retrievers=[retriever, keyword_search], weights=[0.5, 0.5])
+                    st.session_state.retriever = hybrid_retriever
                     st.session_state.rag = get_rag_chain(hybrid_retriever)
                     st.success("PDF processed successfully!")
 
@@ -142,9 +187,18 @@ def main():
             handle_without_pdf(user_question,st.session_state.history)
 
     # Display chat history
-    for sender, msg in st.session_state.chat_history:
-        with st.chat_message(sender):
-            st.markdown(msg)
+    for entry in st.session_state.chat_history:
+        with st.chat_message(entry["sender"]):
+            st.markdown(entry["msg"])
+
+        # Only AI responses have context + eval
+        if entry["sender"] == "ai" and 'context' in entry:
+            with st.expander("🔍 Retrieved Documents (Context)"):
+                for i, doc in enumerate(entry["context"]):
+                    st.markdown(f"**Doc {i+1}:** {doc}")
+        
+            with st.expander("🧪 Evaluation"):
+                st.markdown(entry["eval"])
 
 
 if __name__ == '__main__':
