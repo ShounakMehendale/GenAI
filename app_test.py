@@ -121,10 +121,19 @@ Evaluate the following:
 def handle_without_pdf(user_question,history):
     llm = genai.GenerativeModel('gemini-2.0-flash')
     response = llm.generate_content(user_question)
+    #st.write(response)
     history.append(HumanMessage(content=user_question))
-    history.append(AIMessage(content=response))
-    st.session_state.chat_history.append(("user", user_question))
-    st.session_state.chat_history.append(("ai", response.text))
+    history.append(AIMessage(content=response.text))
+    st.session_state.chat_history.append({
+        "sender": "user",
+        "msg": user_question
+    })
+    #st.session_state.chat_history.append(("user", user_question))
+    st.session_state.chat_history.append({
+        "sender": "ai",
+        "msg": response.text
+    })
+    #st.session_state.chat_history.append(("ai", response.text))
 
 
 def handle_image(query, image):
